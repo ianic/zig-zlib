@@ -5,6 +5,11 @@ pub fn build(b: *std.build.Builder) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    // Modules available to downstream dependencies
+    _ = b.addModule("zlib", .{
+        .source_file = .{ .path = (comptime thisDir()) ++ "/src/main.zig" },
+    });
+
     const lib = zlib.create(b, target, optimize);
     b.installArtifact(lib.step);
 
@@ -24,4 +29,9 @@ pub fn build(b: *std.build.Builder) void {
     });
     lib.link(bin, .{ .import_name = "zlib" });
     b.installArtifact(bin);
+}
+
+/// Path to the directory with the build.zig.
+fn thisDir() []const u8 {
+    return std.fs.path.dirname(@src().file) orelse unreachable;
 }
