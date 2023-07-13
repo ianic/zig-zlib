@@ -129,6 +129,8 @@ pub const CompressorOptions = struct {
         none, // raw deflate data with no zlib header or trailer
         zlib,
         gzip, // to write a simple gzip header and trailer around the compressed data instead of a zlib wrapper
+        ws, // same as none for header, but also removes 4 octets (that are 0x00 0x00 0xff 0xff) from the tail end.
+        // ref: https://datatracker.ietf.org/doc/html/rfc7692#section-7.2.1
     };
     compression_level: c_int = c.Z_DEFAULT_COMPRESSION,
 
@@ -146,7 +148,7 @@ pub const CompressorOptions = struct {
         var ws = @as(i6, if (self.window_size < 9) 9 else self.window_size);
         return switch (self.header) {
             .zlib => ws,
-            .none => -@as(i6, ws),
+            .none, .ws => -@as(i6, ws),
             .gzip => ws + 16,
         };
     }
@@ -235,6 +237,7 @@ pub const DecompressorOptions = struct {
     const HeaderOptions = enum {
         none, // raw deflate data with no zlib header or trailer,
         zlib_or_gzip,
+        ws, // websocket compatibile, append deflate tail to the end
     };
 
     header: HeaderOptions = .zlib_or_gzip,
@@ -243,8 +246,8 @@ pub const DecompressorOptions = struct {
     const Self = @This();
 
     pub fn windowSize(self: Self) i5 {
-        var ws = if (self.window_size < 8) 15 else self.window_size;
-        return if (self.header == .none) -@as(i5, ws) else ws;
+        var window_size = if (self.window_size < 8) 15 else self.window_size;
+        return if (self.header == .none or self.header == .ws) -@as(i5, window_size) else window_size;
     }
 };
 
@@ -316,6 +319,7 @@ pub fn DecompressorReader(comptime ReaderType: type) type {
 pub const Compressor = struct {
     allocator: Allocator,
     stream: *c.z_stream,
+    strip_tail: bool = false,
 
     const Self = @This();
 
@@ -330,7 +334,11 @@ pub const Compressor = struct {
             opt.memory_level,
             opt.strategy,
         ));
-        return .{ .allocator = allocator, .stream = stream };
+        return .{
+            .allocator = allocator,
+            .stream = stream,
+            .strip_tail = opt.header == .ws,
+        };
     }
 
     pub fn deinit(self: *Self) void {
@@ -370,15 +378,20 @@ pub const Compressor = struct {
             if (flag == c.Z_SYNC_FLUSH) break;
             flag = c.Z_SYNC_FLUSH;
         }
+        if (self.strip_tail and len > 4 and tmp[len - 1] == 0xff and tmp[len - 2] == 0xff and tmp[len - 3] == 0x00 and tmp[len - 4] == 0x00)
+            len -= 4;
         return try self.allocator.realloc(tmp, len);
     }
 };
 
 const chunk_size = 4096;
 
+const deflate_tail = [_]u8{ 0x00, 0x00, 0xff, 0xff };
+
 pub const Decompressor = struct {
     allocator: Allocator,
     stream: *c.z_stream,
+    append_tail: bool = false,
 
     const Self = @This();
 
@@ -386,7 +399,11 @@ pub const Decompressor = struct {
         var stream = try zStreamInit(allocator);
         errdefer zStreamDeinit(allocator, stream);
         try checkRC(c.inflateInit2(stream, options.windowSize()));
-        return .{ .allocator = allocator, .stream = stream };
+        return .{
+            .allocator = allocator,
+            .stream = stream,
+            .append_tail = options.header == .ws,
+        };
     }
 
     pub fn deinit(self: *Self) void {
@@ -404,6 +421,7 @@ pub const Decompressor = struct {
         self.stream.next_in = @as([*]u8, @ptrFromInt(@intFromPtr(compressed.ptr)));
         self.stream.avail_in = @as(c_uint, @intCast(compressed.len));
 
+        var tail_appended = false;
         var tmp = try self.allocator.alloc(u8, chunk_size);
         var len: usize = 0; // inflated part of the tmp buffer
         while (true) {
@@ -418,6 +436,13 @@ pub const Decompressor = struct {
             len += out.len - self.stream.avail_out;
             if (self.stream.avail_in != 0 and self.stream.avail_out == 0) { // in not empty, out full
                 tmp = try self.allocator.realloc(tmp, tmp.len * 2); // make more space
+                continue;
+            }
+
+            if (self.append_tail and !tail_appended) {
+                self.stream.next_in = @as([*]u8, @ptrFromInt(@intFromPtr(&deflate_tail)));
+                self.stream.avail_in = @as(c_uint, @intCast(deflate_tail.len));
+                tail_appended = true;
                 continue;
             }
             break;
@@ -513,20 +538,48 @@ fn showBuf(buf: []const u8) void {
     std.debug.print("\n", .{});
 }
 
-test "Hello" {
+test "Hello compress/decompress websocket compatibile" {
     const allocator = std.testing.allocator;
     const input = "Hello";
 
-    var cmp = try Compressor.init(allocator, .{ .header = .none });
+    var cmp = try Compressor.init(allocator, .{ .header = .ws });
     defer cmp.deinit();
     const compressed = try cmp.compressAllAlloc(input);
     defer allocator.free(compressed);
-    //try std.testing.expectEqualSlices(u8, &[_]u8{ 0xf2, 0x48, 0xcd, 0xc9, 0xc9, 0x07, 0x04, 0x00, 0x00, 0xff, 0xff }, compressed);
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0xf2, 0x48, 0xcd, 0xc9, 0xc9, 0x07, 0x08, 0x00 }, compressed);
 
-    var dcp = try Decompressor.init(allocator, .{ .header = .none });
+    var dcp = try Decompressor.init(allocator, .{ .header = .ws });
     defer dcp.deinit();
     const decompressed = try dcp.decompressAllAlloc(compressed);
     defer allocator.free(decompressed);
 
     try std.testing.expectEqualSlices(u8, input, decompressed);
+}
+
+// reference: https://datatracker.ietf.org/doc/html/rfc7692#section-7.2.3.2
+test "Sharing LZ77 Sliding Window" {
+    const allocator = std.testing.allocator;
+    const input = "Hello";
+
+    var cmp = try Compressor.init(allocator, .{ .header = .ws });
+    defer cmp.deinit();
+
+    const c1 = try cmp.compressAllAlloc(input);
+    defer allocator.free(c1);
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0xf2, 0x48, 0xcd, 0xc9, 0xc9, 0x07, 0x08, 0x00 }, c1);
+
+    // compress second message using same sliding window, should be little shorter
+    const c2 = try cmp.compressAllAlloc(input);
+    defer allocator.free(c2);
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0xf2, 0x00, 0x11, 0x00, 0x01, 0x00 }, c2);
+
+    var dcp = try Decompressor.init(allocator, .{ .header = .ws });
+    defer dcp.deinit();
+    const d1 = try dcp.decompressAllAlloc(c1);
+    defer allocator.free(d1);
+    try std.testing.expectEqualSlices(u8, input, d1);
+
+    const d2 = try dcp.decompressAllAlloc(c1);
+    defer allocator.free(d2);
+    try std.testing.expectEqualSlices(u8, input, d2);
 }

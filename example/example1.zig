@@ -6,8 +6,6 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    std.debug.print("Pero\n", .{});
-
     const input = "Hello";
     var cmp = try zlib.Compressor.init(allocator, .{ .header = .none });
     defer cmp.deinit();
@@ -44,7 +42,7 @@ test "Hello from example1" {
 }
 
 // test with:
-// $ zig test --library z -freference-trace  example/example1.zig --main-pkg-path . --deps zlib=zlib --mod zlib::src/main.zig
+// $ zig test -l z  --main-pkg-path . --deps zlib=zlib --mod zlib::src/main.zig example/example1.zig
 
-// build with:
-// zig build
+// build/run with:
+// zig build && zig-out/bin/example1
