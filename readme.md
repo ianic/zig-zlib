@@ -22,6 +22,11 @@ Add dependency in build.zig.zon:
 ```
 In build.zig link 'z' library and 'zlib' module:
 ```zig
+    // Define dependencies
+    const zlib = b.dependency("zlib", .{});
+
+    ...
+
     // Link z library and zlib module.
     exe.linkLibrary(b.dependency("zlib", .{
         .target = target,
