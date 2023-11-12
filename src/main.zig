@@ -88,7 +88,7 @@ fn zfree(private: ?*anyopaque, addr: ?*anyopaque) callconv(.C) void {
     }
 
     var buf: []align(alignment) u8 = undefined;
-    buf.ptr = @as([*]align(alignment) u8, @ptrCast(header));
+    buf.ptr = @as([*]align(alignment) u8, @ptrCast(@alignCast(header)));
     buf.len = ZallocHeader.size_of_aligned + header.size;
     allocator.free(buf);
 }
