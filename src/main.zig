@@ -145,7 +145,7 @@ pub const CompressorOptions = struct {
     const Self = @This();
 
     pub fn windowSize(self: Self) i6 {
-        var ws = @as(i6, if (self.window_size < 9) 9 else self.window_size);
+        const ws = @as(i6, if (self.window_size < 9) 9 else self.window_size);
         return switch (self.header) {
             .zlib => ws,
             .none, .ws => -@as(i6, ws),
@@ -165,7 +165,7 @@ pub fn CompressorWriter(comptime WriterType: type) type {
         const Writer = std.io.Writer(*Self, WriterError, write);
 
         pub fn init(allocator: Allocator, inner_writer: WriterType, opt: CompressorOptions) !Self {
-            var stream = try zStreamInit(allocator);
+            const stream = try zStreamInit(allocator);
             errdefer zStreamDeinit(allocator, stream);
 
             try checkRC(c.deflateInit2(
@@ -190,7 +190,7 @@ pub fn CompressorWriter(comptime WriterType: type) type {
             while (true) {
                 self.stream.next_out = &tmp;
                 self.stream.avail_out = tmp.len;
-                var rc = c.deflate(self.stream, c.Z_FINISH);
+                const rc = c.deflate(self.stream, c.Z_FINISH);
                 if (rc != c.Z_STREAM_END)
                     return errorFromInt(rc);
 
@@ -213,7 +213,7 @@ pub fn CompressorWriter(comptime WriterType: type) type {
                 // compressed
                 self.stream.next_out = &tmp;
                 self.stream.avail_out = tmp.len;
-                var rc = c.deflate(self.stream, c.Z_PARTIAL_FLUSH);
+                const rc = c.deflate(self.stream, c.Z_PARTIAL_FLUSH);
                 if (rc != c.Z_OK)
                     return errorFromInt(rc);
 
@@ -246,7 +246,7 @@ pub const DecompressorOptions = struct {
     const Self = @This();
 
     pub fn windowSize(self: Self) i5 {
-        var window_size = if (self.window_size < 8) 15 else self.window_size;
+        const window_size = if (self.window_size < 8) 15 else self.window_size;
         return if (self.header == .none or self.header == .ws) -@as(i5, window_size) else window_size;
     }
 };
@@ -264,7 +264,7 @@ pub fn DecompressorReader(comptime ReaderType: type) type {
         const Reader = std.io.Reader(*Self, ReaderError, read);
 
         pub fn init(allocator: Allocator, inner_reader: ReaderType, options: DecompressorOptions) !Self {
-            var stream = try zStreamInit(allocator);
+            const stream = try zStreamInit(allocator);
             errdefer zStreamDeinit(allocator, stream);
 
             const rc = c.inflateInit2(stream, options.windowSize());
@@ -297,7 +297,7 @@ pub fn DecompressorReader(comptime ReaderType: type) type {
             self.stream.next_out = @as([*]u8, @ptrFromInt(@intFromPtr(buf.ptr)));
             self.stream.avail_out = @as(c_uint, @intCast(buf.len));
 
-            var rc = c.inflate(self.stream, c.Z_SYNC_FLUSH);
+            const rc = c.inflate(self.stream, c.Z_SYNC_FLUSH);
             if (rc != c.Z_OK and rc != c.Z_STREAM_END)
                 return errorFromInt(rc);
 
@@ -324,7 +324,7 @@ pub const Compressor = struct {
     const Self = @This();
 
     pub fn init(allocator: Allocator, opt: CompressorOptions) !Self {
-        var stream = try zStreamInit(allocator);
+        const stream = try zStreamInit(allocator);
         errdefer zStreamDeinit(allocator, stream);
         try checkRC(c.deflateInit2(
             stream,
@@ -361,11 +361,11 @@ pub const Compressor = struct {
 
         var flag = c.Z_PARTIAL_FLUSH;
         while (true) {
-            var out = tmp[len..];
+            const out = tmp[len..];
             self.stream.next_out = @as([*]u8, @ptrFromInt(@intFromPtr(out.ptr)));
             self.stream.avail_out = @as(c_uint, @intCast(out.len));
 
-            var rc = c.deflate(self.stream, flag);
+            const rc = c.deflate(self.stream, flag);
             if (rc != c.Z_OK and rc != c.Z_STREAM_END)
                 return errorFromInt(rc);
 
@@ -396,7 +396,7 @@ pub const Decompressor = struct {
     const Self = @This();
 
     pub fn init(allocator: Allocator, options: DecompressorOptions) !Self {
-        var stream = try zStreamInit(allocator);
+        const stream = try zStreamInit(allocator);
         errdefer zStreamDeinit(allocator, stream);
         try checkRC(c.inflateInit2(stream, options.windowSize()));
         return .{
@@ -425,11 +425,11 @@ pub const Decompressor = struct {
         var tmp = try self.allocator.alloc(u8, chunk_size);
         var len: usize = 0; // inflated part of the tmp buffer
         while (true) {
-            var out = tmp[len..];
+            const out = tmp[len..];
             self.stream.next_out = @as([*]u8, @ptrFromInt(@intFromPtr(out.ptr)));
             self.stream.avail_out = @as(c_uint, @intCast(out.len));
 
-            var rc = c.inflate(self.stream, c.Z_SYNC_FLUSH);
+            const rc = c.inflate(self.stream, c.Z_SYNC_FLUSH);
             if (rc != c.Z_OK and rc != c.Z_STREAM_END) {
                 return errorFromInt(rc);
             }
