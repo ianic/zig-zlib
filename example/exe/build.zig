@@ -67,8 +67,13 @@ pub fn build(b: *std.Build) void {
         .root_source_file = .{ .path = "src/main.zig" },
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
     });
-
+    unit_tests.linkLibrary(b.dependency("zlib", .{
+        .target = target,
+        .optimize = optimize,
+    }).artifact("z"));
+    unit_tests.addModule("zlib", zlib.module("zlib"));
     const run_unit_tests = b.addRunArtifact(unit_tests);
 
     // Similar to creating the run step earlier, this exposes a `test` step to
