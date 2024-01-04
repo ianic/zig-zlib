@@ -303,7 +303,7 @@ pub fn DecompressorReader(comptime ReaderType: type) type {
 
             if (self.stream.avail_in != 0) {
                 const done_pos = self.pos - self.stream.avail_in;
-                std.mem.copy(u8, self.tmp[0..], self.tmp[done_pos..]);
+                std.mem.copyForwards(u8, self.tmp[0..], self.tmp[done_pos..]);
                 self.pos = self.tmp[done_pos..].len;
             }
 
